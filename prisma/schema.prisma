@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String
+  isAdmin       Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  articles      Article[]
+  comments      Comment[]
+}
+
+model Article {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  title       String
+  content     String
+  excerpt     String?
+  status      String    @default("DRAFT")
+  coverImage  String?
+  authorId    String
+  author      User      @relation(fields: [authorId], references: [id])
+  tags        Tag[]     @relation("ArticleTags")
+  views       View[]
+  comments    Comment[]
+  readTime    Int       @default(5)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  @@index([status, createdAt])
+  @@index([slug])
+}
+
+model Tag {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  slug      String    @unique
+  articles  Article[] @relation("ArticleTags")
+  createdAt DateTime  @default(now())
+}
+
+model Comment {
+  id         String    @id @default(cuid())
+  articleId  String
+  article    Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  parentId   String?
+  parent     Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies    Comment[] @relation("CommentReplies")
+  authorName String
+  authorEmail String
+  content    String
+  isApproved Boolean   @default(false)
+  isAdmin    Boolean   @default(false)
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id])
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([articleId, isApproved, createdAt])
+}
+
+model View {
+  id         String   @id @default(cuid())
+  articleId  String
+  article    Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  fingerprint String
+  ip         String
+  userAgent  String
+  viewedAt   DateTime @default(now())
+
+  @@unique([articleId, fingerprint])
+  @@index([articleId])
+}
+
+model SiteSettings {
+  id           String  @id @default(cuid())
+  key          String  @unique
+  value        String
+  updatedAt    DateTime @updatedAt
+}
