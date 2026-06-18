@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Search, ArrowRight, FileText, SortAsc, SortDesc, Sparkles, Clock, X, Copy, Check } from 'lucide-react';
-import { searchArticles, type SearchResult, type SearchSort } from '@/lib/search';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { Search, ArrowRight, FileText, SortAsc, SortDesc, Sparkles, Clock, X, Copy, Check, Type, FileText as FileTextIcon, Hash } from 'lucide-react';
+import { searchArticles, type SearchResult, type SearchSort, type SearchScope } from '@/lib/search';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 
@@ -62,19 +62,33 @@ const SORT_OPTIONS: { value: SearchSort; label: string; icon: React.ComponentTyp
   { value: 'date-asc', label: '时间 (旧→新)', icon: SortAsc },
 ];
 
+const SCOPE_OPTIONS: { value: SearchScope; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { value: 'all', label: '全部', icon: Hash },
+  { value: 'title', label: '仅标题', icon: Type },
+  { value: 'content', label: '仅正文', icon: FileTextIcon },
+];
+
 function isValidSort(v: string | null): v is SearchSort {
   return v === 'relevance' || v === 'date-desc' || v === 'date-asc';
+}
+
+function isValidScope(v: string | null): v is SearchScope {
+  return v === 'all' || v === 'title' || v === 'content';
 }
 
 export function SearchClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const initialQuery = searchParams.get('q') || '';
   const initialSort = searchParams.get('sort');
+  const initialScope = searchParams.get('scope');
   const defaultSort: SearchSort = isValidSort(initialSort) ? initialSort : 'relevance';
+  const defaultScope: SearchScope = isValidScope(initialScope) ? initialScope : 'all';
 
   const [query, setQuery] = useState(initialQuery);
   const [sort, setSort] = useState<SearchSort>(defaultSort);
+  const [scope, setScope] = useState<SearchScope>(defaultScope);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -83,7 +97,7 @@ export function SearchClient() {
   const [copied, setCopied] = useState(false);
 
   const syncUrl = useCallback(
-    (nextQuery: string, nextSort: SearchSort) => {
+    (nextQuery: string, nextSort: SearchSort, nextScope: SearchScope) => {
       const params = new URLSearchParams();
       if (nextQuery.trim()) {
         params.set('q', nextQuery.trim());
@@ -91,14 +105,17 @@ export function SearchClient() {
       if (nextSort !== 'relevance') {
         params.set('sort', nextSort);
       }
+      if (nextScope !== 'all') {
+        params.set('scope', nextScope);
+      }
       const queryStr = params.toString();
-      router.replace(queryStr ? `?${queryStr}` : '/search', { scroll: false });
+      router.replace(queryStr ? `?${queryStr}` : pathname, { scroll: false });
     },
-    [router],
+    [router, pathname],
   );
 
   const doSearch = useCallback(
-    async (searchQuery: string, searchSort: SearchSort) => {
+    async (searchQuery: string, searchSort: SearchSort, searchScope: SearchScope) => {
       if (!searchQuery.trim()) {
         setResults([]);
         setHasSearched(false);
@@ -113,7 +130,7 @@ export function SearchClient() {
       const started = performance.now();
 
       try {
-        const searchResults = await searchArticles(searchQuery.trim(), searchSort);
+        const searchResults = await searchArticles(searchQuery.trim(), searchSort, searchScope);
         setResults(searchResults);
         setSearchTime(performance.now() - started);
       } catch (err) {
@@ -129,15 +146,23 @@ export function SearchClient() {
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    syncUrl(query, sort);
-    await doSearch(query, sort);
+    syncUrl(query, sort, scope);
+    await doSearch(query, sort, scope);
   };
 
   const handleSortChange = async (newSort: SearchSort) => {
     setSort(newSort);
-    syncUrl(query, newSort);
+    syncUrl(query, newSort, scope);
     if (hasSearched && query.trim()) {
-      await doSearch(query, newSort);
+      await doSearch(query, newSort, scope);
+    }
+  };
+
+  const handleScopeChange = async (newScope: SearchScope) => {
+    setScope(newScope);
+    syncUrl(query, sort, newScope);
+    if (hasSearched && query.trim()) {
+      await doSearch(query, sort, newScope);
     }
   };
 
@@ -145,12 +170,13 @@ export function SearchClient() {
     setQuery('');
     setResults([]);
     setHasSearched(false);
-    syncUrl('', sort);
+    syncUrl('', sort, scope);
   };
 
   const handleCopyLink = async () => {
     try {
-      const url = `${window.location.origin}${window.location.pathname}?${searchParams.toString()}`;
+      const params = new URLSearchParams(searchParams.toString());
+      const url = `${window.location.origin}${pathname}${params.toString() ? `?${params.toString()}` : ''}`;
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -162,16 +188,33 @@ export function SearchClient() {
   useEffect(() => {
     const qFromUrl = searchParams.get('q') || '';
     const sortFromUrl = searchParams.get('sort');
+    const scopeFromUrl = searchParams.get('scope');
     const parsedSort: SearchSort = isValidSort(sortFromUrl) ? sortFromUrl : 'relevance';
+    const parsedScope: SearchScope = isValidScope(scopeFromUrl) ? scopeFromUrl : 'all';
+
+    setSort(parsedSort);
+    setScope(parsedScope);
 
     if (qFromUrl && qFromUrl.trim()) {
       setQuery(qFromUrl);
-      setSort(parsedSort);
       setHasSearched(false);
-      doSearch(qFromUrl, parsedSort);
+      doSearch(qFromUrl, parsedSort, parsedScope);
+    } else {
+      setQuery('');
+      setResults([]);
+      setHasSearched(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  const resultLinkHref = (slug: string) => {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set('q', query.trim());
+    if (sort !== 'relevance') params.set('sort', sort);
+    if (scope !== 'all') params.set('scope', scope);
+    const queryStr = params.toString();
+    return queryStr ? `/articles/${slug}?${queryStr}` : `/articles/${slug}`;
+  };
 
   return (
     <div>
@@ -227,6 +270,15 @@ export function SearchClient() {
               <Search className="w-3 h-3" />
               {query.trim()}
             </span>
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+              scope === 'title'
+                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                : scope === 'content'
+                ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+            }`}>
+              {scope === 'title' ? '仅标题' : scope === 'content' ? '仅正文' : '全部范围'}
+            </span>
             {searchTime !== null && (
               <span className="inline-flex items-center gap-1">
                 <Clock className="w-3 h-3" />
@@ -236,6 +288,26 @@ export function SearchClient() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs">
+              {SCOPE_OPTIONS.map((opt) => {
+                const Icon = opt.icon;
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => handleScopeChange(opt.value)}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md transition-colors ${
+                      scope === opt.value
+                        ? 'bg-white dark:bg-slate-600 text-slate-900 dark:text-white shadow-sm font-medium'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white'
+                    }`}
+                    title={`搜索范围:${opt.label}`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
             <div className="flex items-center bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs">
               {SORT_OPTIONS.map((opt) => {
                 const Icon = opt.icon;
@@ -283,14 +355,16 @@ export function SearchClient() {
             <div className="bg-white dark:bg-slate-800 rounded-xl p-12 text-center border border-slate-200 dark:border-slate-700">
               <FileText className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
               <p className="text-slate-500 dark:text-slate-400 mb-2">未找到相关文章</p>
-              <p className="text-sm text-slate-400 dark:text-slate-500">尝试使用其他关键词搜索</p>
+              <p className="text-sm text-slate-400 dark:text-slate-500">
+                尝试使用其他关键词，或切换搜索范围
+              </p>
             </div>
           ) : (
             <div className="space-y-4">
               {results.map((result) => (
                 <Link
                   key={result.id}
-                  href={`/articles/${result.slug}?q=${encodeURIComponent(query.trim())}`}
+                  href={resultLinkHref(result.slug)}
                   className="block bg-white dark:bg-slate-800 rounded-xl p-6 border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-colors group"
                 >
                   <div className="flex items-start justify-between gap-4 mb-2">

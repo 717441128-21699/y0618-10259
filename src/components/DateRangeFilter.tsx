@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Calendar, X } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 
 interface DateRangePreset {
   key: string;
@@ -84,6 +84,16 @@ export function DateRangeFilter() {
   }, [dateFrom, dateTo]);
 
   const hasFilter = !!dateFrom || !!dateTo;
+
+  const isCustomMode = activePreset === 'custom';
+
+  useEffect(() => {
+    if (isCustomMode && !customOpen) {
+      setCustomOpen(true);
+      if (!customFrom) setCustomFrom(dateFrom);
+      if (!customTo) setCustomTo(dateTo);
+    }
+  }, [isCustomMode, customOpen, dateFrom, dateTo, customFrom, customTo]);
 
   const applyParams = (from: string, to: string) => {
     const params = new URLSearchParams(searchParams.toString());

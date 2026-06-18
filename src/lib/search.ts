@@ -3,6 +3,7 @@ import { stripHtml } from './utils';
 import { renderMarkdown } from './markdown';
 
 export type SearchSort = 'relevance' | 'date-desc' | 'date-asc';
+export type SearchScope = 'all' | 'title' | 'content';
 
 export interface SearchResult {
   id: string;
@@ -39,6 +40,7 @@ function safeMatch(text: string, keyword: string): number {
 export async function searchArticles(
   query: string,
   sort: SearchSort = 'relevance',
+  scope: SearchScope = 'all',
 ): Promise<SearchResult[]> {
   const keywords = query
     .toLowerCase()
@@ -61,6 +63,8 @@ export async function searchArticles(
   });
 
   const results: SearchResult[] = [];
+  const scopeTitle = scope === 'all' || scope === 'title';
+  const scopeContent = scope === 'all' || scope === 'content';
 
   for (const article of articles) {
     const contentText = stripHtml(renderMarkdown(article.content)).toLowerCase();
@@ -71,9 +75,9 @@ export async function searchArticles(
     const matched: Set<string> = new Set();
 
     for (const keyword of keywords) {
-      const titleMatches = safeMatch(titleText, keyword);
-      const excerptMatches = safeMatch(excerptText, keyword);
-      const contentMatches = safeMatch(contentText, keyword);
+      const titleMatches = scopeTitle ? safeMatch(titleText, keyword) : 0;
+      const excerptMatches = scopeContent ? safeMatch(excerptText, keyword) : 0;
+      const contentMatches = scopeContent ? safeMatch(contentText, keyword) : 0;
 
       if (titleMatches > 0 || excerptMatches > 0 || contentMatches > 0) {
         matched.add(keyword);
@@ -83,7 +87,7 @@ export async function searchArticles(
 
     if (score > 0) {
       let excerpt = article.excerpt || '';
-      if (!excerpt) {
+      if (!excerpt && scopeContent) {
         const plainContent = stripHtml(renderMarkdown(article.content));
         const firstKeyword = Array.from(matched)[0];
         const index = plainContent.toLowerCase().indexOf(firstKeyword);
@@ -103,7 +107,7 @@ export async function searchArticles(
         id: article.id,
         slug: article.slug,
         title: article.title,
-        excerpt,
+        excerpt: excerpt || (scopeTitle ? article.title : ''),
         score,
         matchedKeywords: Array.from(matched),
         publishedAt: article.publishedAt ? article.publishedAt.toISOString() : null,
