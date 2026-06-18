@@ -2,6 +2,8 @@ import { prisma } from './prisma';
 import { stripHtml } from './utils';
 import { renderMarkdown } from './markdown';
 
+export type SearchSort = 'relevance' | 'date-desc' | 'date-asc';
+
 export interface SearchResult {
   id: string;
   slug: string;
@@ -9,6 +11,7 @@ export interface SearchResult {
   excerpt: string;
   score: number;
   matchedKeywords: string[];
+  publishedAt: string | null;
 }
 
 function escapeRegex(str: string): string {
@@ -33,12 +36,15 @@ function safeMatch(text: string, keyword: string): number {
   }
 }
 
-export async function searchArticles(query: string): Promise<SearchResult[]> {
+export async function searchArticles(
+  query: string,
+  sort: SearchSort = 'relevance',
+): Promise<SearchResult[]> {
   const keywords = query
     .toLowerCase()
     .trim()
     .split(/\s+/)
-    .filter(k => k.length > 0);
+    .filter((k) => k.length > 0);
 
   if (keywords.length === 0) return [];
 
@@ -50,6 +56,7 @@ export async function searchArticles(query: string): Promise<SearchResult[]> {
       title: true,
       content: true,
       excerpt: true,
+      publishedAt: true,
     },
   });
 
@@ -83,7 +90,10 @@ export async function searchArticles(query: string): Promise<SearchResult[]> {
         if (index > -1) {
           const start = Math.max(0, index - 80);
           const end = Math.min(plainContent.length, index + 120);
-          excerpt = (start > 0 ? '...' : '') + plainContent.substring(start, end) + (end < plainContent.length ? '...' : '');
+          excerpt =
+            (start > 0 ? '...' : '') +
+            plainContent.substring(start, end) +
+            (end < plainContent.length ? '...' : '');
         } else {
           excerpt = plainContent.substring(0, 200) + '...';
         }
@@ -96,9 +106,33 @@ export async function searchArticles(query: string): Promise<SearchResult[]> {
         excerpt,
         score,
         matchedKeywords: Array.from(matched),
+        publishedAt: article.publishedAt ? article.publishedAt.toISOString() : null,
       });
     }
   }
 
-  return results.sort((a, b) => b.score - a.score);
+  switch (sort) {
+    case 'date-desc':
+      return results.sort((a, b) => {
+        const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+        const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+        if (tb !== ta) return tb - ta;
+        return b.score - a.score;
+      });
+    case 'date-asc':
+      return results.sort((a, b) => {
+        const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+        const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+        if (ta !== tb) return ta - tb;
+        return b.score - a.score;
+      });
+    case 'relevance':
+    default:
+      return results.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+        const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+        return tb - ta;
+      });
+  }
 }
