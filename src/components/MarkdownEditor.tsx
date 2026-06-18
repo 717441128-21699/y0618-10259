@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { marked } from 'marked';
 import { saveDraft, createArticle, updateArticle } from '@/lib/actions/article';
-import { Save, Eye, Edit3, Send, Clock, CheckCircle, AlertCircle, X } from 'lucide-react';
+import { Save, Eye, Edit3, Send, Clock, CheckCircle, AlertCircle, X, HardDrive, RotateCcw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { Article, Tag } from '@prisma/client';
 
@@ -17,6 +17,50 @@ marked.setOptions({
 });
 
 const AUTO_SAVE_INTERVAL = 60000;
+const LOCAL_BACKUP_DEBOUNCE = 2000;
+
+interface LocalBackup {
+  title: string;
+  content: string;
+  tags: string[];
+  savedAt: number;
+}
+
+function getBackupKey(articleId: string | null): string {
+  return `blog_draft_backup_${articleId || 'new'}`;
+}
+
+function readLocalBackup(key: string): LocalBackup | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LocalBackup;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.title !== 'string' || typeof parsed.content !== 'string') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalBackup(key: string, data: LocalBackup): void {
+  try {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function clearLocalBackup(key: string): void {
+  try {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
 
 export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
   const router = useRouter();
@@ -31,10 +75,43 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [articleId, setArticleId] = useState(initialArticle?.id || null);
+  const [localBackupTime, setLocalBackupTime] = useState<Date | null>(null);
+  const [restorePrompt, setRestorePrompt] = useState<LocalBackup | null>(null);
+
   const autoSaveTimer = useRef<NodeJS.Timeout | null>(null);
+  const localBackupTimer = useRef<NodeJS.Timeout | null>(null);
   const hasUnsavedChanges = useRef(false);
 
   const renderedContent = marked.parse(content) as string;
+
+  const backupKey = getBackupKey(articleId);
+
+  const scheduleLocalBackup = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (localBackupTimer.current) {
+      clearTimeout(localBackupTimer.current);
+    }
+    localBackupTimer.current = setTimeout(() => {
+      if (!title && !content && tags.length === 0) {
+        clearLocalBackup(backupKey);
+        setLocalBackupTime(null);
+        return;
+      }
+      const backup: LocalBackup = {
+        title,
+        content,
+        tags,
+        savedAt: Date.now(),
+      };
+      writeLocalBackup(backupKey, backup);
+      setLocalBackupTime(new Date(backup.savedAt));
+    }, LOCAL_BACKUP_DEBOUNCE);
+  }, [title, content, tags, backupKey]);
+
+  const clearAllBackups = useCallback(() => {
+    clearLocalBackup(getBackupKey(null));
+    clearLocalBackup(getBackupKey(articleId));
+  }, [articleId]);
 
   const handleAutoSave = useCallback(async () => {
     if (!hasUnsavedChanges.current) return;
@@ -54,7 +131,16 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
         setError(result.error);
         setSaveStatus('error');
       } else if ('article' in result && result.article) {
-        setArticleId(result.article.id);
+        if (!articleId && result.article.id) {
+          const oldKey = getBackupKey(null);
+          const oldBackup = readLocalBackup(oldKey);
+          if (oldBackup) {
+            const newKey = getBackupKey(result.article.id);
+            writeLocalBackup(newKey, oldBackup);
+            clearLocalBackup(oldKey);
+          }
+          setArticleId(result.article.id);
+        }
         setLastSaved(new Date());
         setSaveStatus('success');
         hasUnsavedChanges.current = false;
@@ -69,8 +155,29 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
   }, [articleId, title, content, tags]);
 
   useEffect(() => {
+    const key = getBackupKey(articleId);
+    const backup = readLocalBackup(key);
+    if (backup) {
+      const isEmpty = !initialArticle?.title && !initialArticle?.content && (initialArticle?.tags?.length || 0) === 0;
+      const backupNotEmpty = backup.title || backup.content || backup.tags.length > 0;
+      if (isEmpty && backupNotEmpty) {
+        setRestorePrompt(backup);
+      } else if (backupNotEmpty) {
+        const backupTime = new Date(backup.savedAt);
+        const initialEmpty = !title && !content && tags.length === 0;
+        if (initialEmpty) {
+          setRestorePrompt(backup);
+        } else {
+          setLocalBackupTime(backupTime);
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     hasUnsavedChanges.current = true;
-  }, [title, content, tags]);
+    scheduleLocalBackup();
+  }, [title, content, tags, scheduleLocalBackup]);
 
   useEffect(() => {
     autoSaveTimer.current = setInterval(() => {
@@ -88,6 +195,15 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if ((title || content) && typeof window !== 'undefined') {
+        const backup: LocalBackup = {
+          title,
+          content,
+          tags,
+          savedAt: Date.now(),
+        };
+        writeLocalBackup(backupKey, backup);
+      }
       if (hasUnsavedChanges.current && (title || content)) {
         e.preventDefault();
         e.returnValue = '';
@@ -96,7 +212,23 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [title, content]);
+  }, [title, content, tags, backupKey]);
+
+  const handleRestoreBackup = () => {
+    if (!restorePrompt) return;
+    setTitle(restorePrompt.title);
+    setContent(restorePrompt.content);
+    setTags(restorePrompt.tags);
+    setLocalBackupTime(new Date(restorePrompt.savedAt));
+    setRestorePrompt(null);
+    hasUnsavedChanges.current = true;
+  };
+
+  const handleDiscardBackup = () => {
+    clearLocalBackup(backupKey);
+    setRestorePrompt(null);
+    setLocalBackupTime(null);
+  };
 
   const handleAddTag = () => {
     const trimmed = tagInput.trim();
@@ -138,10 +270,11 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
       if ('error' in result && result.error) {
         setError(result.error);
       } else if ('article' in result && result.article) {
+        clearAllBackups();
         if (status === 'PUBLISHED') {
           router.push(`/articles/${result.article.slug}`);
         } else {
-            router.push('/admin');
+          router.push('/admin');
         }
       }
     } catch (e) {
@@ -153,6 +286,37 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
+      {restorePrompt && (
+        <div className="mb-4 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+          <div className="flex items-start gap-3">
+            <RotateCcw className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-amber-800 dark:text-amber-200">
+                发现本地备份草稿
+              </p>
+              <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                备份时间: {new Date(restorePrompt.savedAt).toLocaleString()}
+                {restorePrompt.title && ` · 标题: ${restorePrompt.title}`}
+              </p>
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={handleRestoreBackup}
+                  className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors"
+                >
+                  恢复备份
+                </button>
+                <button
+                  onClick={handleDiscardBackup}
+                  className="px-3 py-1.5 border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 rounded-lg text-sm font-medium hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
+                >
+                  放弃备份
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 px-1 sm:px-0">
         <div className="flex-1">
           <input
@@ -205,6 +369,12 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
               <span className="text-sm text-red-600 flex items-center gap-1">
                 <AlertCircle className="w-4 h-4" />
                 保存失败
+              </span>
+            )}
+            {localBackupTime && saveStatus === 'idle' && (
+              <span className="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-1" title={`本地备份于 ${localBackupTime.toLocaleString()}`}>
+                <HardDrive className="w-4 h-4" />
+                {localBackupTime.toLocaleTimeString()}
               </span>
             )}
             <button
@@ -284,10 +454,14 @@ export function MarkdownEditor({ initialArticle }: MarkdownEditorProps) {
         )}
       </div>
 
-      <div className="mt-4 text-xs text-slate-400 flex items-center gap-4">
+      <div className="mt-4 text-xs text-slate-400 flex items-center gap-4 flex-wrap">
         <span className="flex items-center gap-1">
           <Clock className="w-3 h-3" />
-          每60秒自动保存草稿到本地
+          每60秒自动保存草稿
+        </span>
+        <span className="flex items-center gap-1">
+          <HardDrive className="w-3 h-3" />
+          本地实时备份（断网可恢复）
         </span>
         <span>字数: {content.length}</span>
       </div>

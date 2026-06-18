@@ -11,6 +11,28 @@ export interface SearchResult {
   matchedKeywords: string[];
 }
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function safeMatch(text: string, keyword: string): number {
+  try {
+    const escaped = escapeRegex(keyword);
+    const matches = text.match(new RegExp(escaped, 'gi'));
+    return matches ? matches.length : 0;
+  } catch {
+    const lowerText = text.toLowerCase();
+    const lowerKeyword = keyword.toLowerCase();
+    let count = 0;
+    let idx = lowerText.indexOf(lowerKeyword);
+    while (idx !== -1) {
+      count++;
+      idx = lowerText.indexOf(lowerKeyword, idx + lowerKeyword.length);
+    }
+    return count;
+  }
+}
+
 export async function searchArticles(query: string): Promise<SearchResult[]> {
   const keywords = query
     .toLowerCase()
@@ -42,9 +64,9 @@ export async function searchArticles(query: string): Promise<SearchResult[]> {
     const matched: Set<string> = new Set();
 
     for (const keyword of keywords) {
-      const titleMatches = (titleText.match(new RegExp(keyword, 'g')) || []).length;
-      const excerptMatches = (excerptText.match(new RegExp(keyword, 'g')) || []).length;
-      const contentMatches = (contentText.match(new RegExp(keyword, 'g')) || []).length;
+      const titleMatches = safeMatch(titleText, keyword);
+      const excerptMatches = safeMatch(excerptText, keyword);
+      const contentMatches = safeMatch(contentText, keyword);
 
       if (titleMatches > 0 || excerptMatches > 0 || contentMatches > 0) {
         matched.add(keyword);

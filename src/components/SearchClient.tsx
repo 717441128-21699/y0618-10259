@@ -1,52 +1,108 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Search, ArrowRight, FileText } from 'lucide-react';
 import { searchArticles, type SearchResult } from '@/lib/search';
 import Link from 'next/link';
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightText(text: string, keywords: string[]): React.ReactNode[] {
+  if (!keywords.length || !text) return [text];
+
+  try {
+    const sortedKeywords = [...keywords].sort((a, b) => b.length - a.length);
+    const escapedKeywords = sortedKeywords.map(escapeRegex);
+    const pattern = escapedKeywords.join('|');
+
+    if (!pattern) return [text];
+
+    const regex = new RegExp(`(${pattern})`, 'gi');
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(
+          <span key={`text-${lastIndex}`}>{text.substring(lastIndex, match.index)}</span>
+        );
+      }
+      parts.push(
+        <mark
+          key={`mark-${match.index}`}
+          className="bg-yellow-200 dark:bg-yellow-700/50 px-0.5 rounded"
+        >
+          {match[0]}
+        </mark>
+      );
+      lastIndex = match.index + match[0].length;
+      if (match.index === regex.lastIndex) {
+        regex.lastIndex++;
+      }
+    }
+
+    if (lastIndex < text.length) {
+      parts.push(<span key={`text-${lastIndex}`}>{text.substring(lastIndex)}</span>);
+    }
+
+    return parts.length > 0 ? parts : [text];
+  } catch (e) {
+    return [text];
+  }
+}
+
 export function SearchClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get('q') || '');
+  const initialQuery = searchParams.get('q') || '';
+  const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
+  const [hasSearched, setHasSearched] = useState(!!initialQuery);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSearch = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!query.trim()) return;
-
-    router.push(`?q=${encodeURIComponent(query.trim())}`);
+  const doSearch = async (searchQuery: string) => {
+    if (!searchQuery.trim()) {
+      setResults([]);
+      setHasSearched(false);
+      return;
+    }
 
     setIsSearching(true);
     setHasSearched(true);
+    setError(null);
 
     try {
-      const searchResults = await searchArticles(query.trim());
+      const searchResults = await searchArticles(searchQuery.trim());
       setResults(searchResults);
-    } catch (error) {
-      console.error('Search error:', error);
+    } catch (err) {
+      console.error('Search error:', err);
+      setError('搜索时出现错误，请稍后重试');
+      setResults([]);
     } finally {
       setIsSearching(false);
     }
   };
 
-  const highlightText = (text: string, keywords: string[]) => {
-    if (!keywords.length) return text;
-    const regex = new RegExp(`(${keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}`, 'gi');
-    const parts = text.split(regex);
-    return parts.map((part, i) =>
-      keywords.some((k) => k.toLowerCase() === part.toLowerCase()) ? (
-        <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 px-0.5 rounded">
-          {part}
-        </mark>
-      ) : (
-        <span key={i}>{part}</span>
-      )
-    );
+  const handleSearch = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (query.trim()) {
+      router.replace(`?q=${encodeURIComponent(query.trim())}`, { scroll: false });
+    }
+    await doSearch(query);
   };
+
+  useEffect(() => {
+    if (initialQuery && !hasSearched) {
+      setQuery(initialQuery);
+      doSearch(initialQuery);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div>
@@ -75,10 +131,19 @@ export function SearchClient() {
         </div>
       </form>
 
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300">
+          {error}
+        </div>
+      )}
+
       {hasSearched && !isSearching && (
         <div>
           <p className="text-slate-500 dark:text-slate-400 mb-6">
-            找到 {results.length} 个相关结果
+            找到 <span className="font-semibold text-slate-700 dark:text-slate-200">{results.length}</span> 个相关结果
+            {query && (
+              <>，关键词: <span className="font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded">{query}</span></>
+            )}
           </p>
 
           {results.length === 0 ? (

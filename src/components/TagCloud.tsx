@@ -1,4 +1,6 @@
-import Link from 'next/link';
+'use client';
+
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Tag } from 'lucide-react';
 import type { Tag as TagModel } from '@prisma/client';
 
@@ -10,6 +12,20 @@ interface TagCloudProps {
 }
 
 export function TagCloud({ tags, activeTag }: TagCloudProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const handleTagClick = (tagSlug: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (tagSlug) {
+      params.set('tag', tagSlug);
+    } else {
+      params.delete('tag');
+    }
+    const query = params.toString();
+    router.replace(query ? `/?${query}` : '/');
+  };
+
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl p-5 shadow-sm border border-slate-200 dark:border-slate-700">
       <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
@@ -17,8 +33,8 @@ export function TagCloud({ tags, activeTag }: TagCloudProps) {
         标签
       </h3>
       <div className="flex flex-wrap gap-2">
-        <Link
-          href="/"
+        <button
+          onClick={() => handleTagClick(null)}
           className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
             !activeTag
               ? 'bg-primary-600 text-white'
@@ -26,11 +42,11 @@ export function TagCloud({ tags, activeTag }: TagCloudProps) {
           }`}
         >
           全部
-        </Link>
+        </button>
         {tags.map((tag) => (
-          <Link
+          <button
             key={tag.id}
-            href={`/?tag=${tag.slug}`}
+            onClick={() => handleTagClick(tag.slug)}
             className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
               activeTag === tag.slug
                 ? 'bg-primary-600 text-white'
@@ -41,7 +57,7 @@ export function TagCloud({ tags, activeTag }: TagCloudProps) {
             <span className={`text-xs ${activeTag === tag.slug ? 'text-primary-100' : 'text-slate-400'}`}>
               ({tag._count.articles})
             </span>
-          </Link>
+          </button>
         ))}
       </div>
     </div>

@@ -5,7 +5,7 @@ import { renderMarkdown } from '@/lib/markdown';
 import { formatDate, generateExcerpt } from '@/lib/utils';
 import { getSession } from '@/lib/auth';
 import { getCommentModerationEnabled } from '@/lib/settings';
-import { CommentSection } from '@/components/CommentSection';
+import { CommentSection, type CommentWithReplies } from '@/components/CommentSection';
 import { ViewCounter } from '@/components/ViewCounter';
 import Link from 'next/link';
 import { Calendar, Clock, Tag, ArrowLeft } from 'lucide-react';
@@ -51,9 +51,9 @@ export async function generateMetadata({ params }: ArticlePageProps): Promise<Me
   };
 }
 
-function buildCommentTree(comments: any[]): any[] {
-  const map = new Map<string, any>();
-  const roots: any[] = [];
+function buildCommentTree(comments: any[]): CommentWithReplies[] {
+  const map = new Map<string, CommentWithReplies>();
+  const roots: CommentWithReplies[] = [];
 
   comments.forEach((c) => {
     map.set(c.id, { ...c, replies: [] });

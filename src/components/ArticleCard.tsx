@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Calendar, Clock, Tag as TagIcon, Eye } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import type { Article, Tag as TagModel } from '@prisma/client';
@@ -10,14 +13,58 @@ interface ArticleCardProps {
       views: number;
     };
   };
+  highlightKeyword?: string;
 }
 
-export function ArticleCard({ article }: ArticleCardProps) {
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightText(text: string, keyword?: string): React.ReactNode {
+  if (!keyword || !keyword.trim()) return text;
+  const kw = keyword.trim();
+  if (!text.toLowerCase().includes(kw.toLowerCase())) return text;
+
+  try {
+    const escaped = escapeRegex(kw);
+    const regex = new RegExp(`(${escaped})`, 'gi');
+    const parts = text.split(regex);
+    return parts.map((part, i) => {
+      if (part.toLowerCase() === kw.toLowerCase()) {
+        return (
+          <mark
+            key={i}
+            className="bg-yellow-200 dark:bg-yellow-900/50 text-yellow-900 dark:text-yellow-200 rounded px-0.5"
+          >
+            {part}
+          </mark>
+        );
+      }
+      return <span key={i}>{part}</span>;
+    });
+  } catch {
+    return text;
+  }
+}
+
+export function ArticleCard({ article, highlightKeyword }: ArticleCardProps) {
+  const searchParams = useSearchParams();
+  const currentQ = searchParams.get('q');
+
+  const buildTagHref = (tagSlug: string) => {
+    const params = new URLSearchParams();
+    params.set('tag', tagSlug);
+    if (currentQ) {
+      params.set('q', currentQ);
+    }
+    return `/?${params.toString()}`;
+  };
+
   return (
     <article className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm hover:shadow-md transition-all border border-slate-200 dark:border-slate-700 group">
       <Link href={`/articles/${article.slug}`}>
         <h2 className="text-xl font-bold text-slate-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors mb-2">
-          {article.title}
+          {highlightText(article.title, highlightKeyword)}
         </h2>
       </Link>
 
@@ -40,7 +87,7 @@ export function ArticleCard({ article }: ArticleCardProps) {
 
       {article.excerpt && (
         <p className="text-slate-600 dark:text-slate-300 mb-4 line-clamp-3">
-          {article.excerpt}
+          {highlightText(article.excerpt, highlightKeyword)}
         </p>
       )}
 
@@ -49,7 +96,7 @@ export function ArticleCard({ article }: ArticleCardProps) {
           {article.tags.map((tag) => (
             <Link
               key={tag.id}
-              href={`/?tag=${tag.slug}`}
+              href={buildTagHref(tag.slug)}
               className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-full text-xs hover:bg-primary-100 dark:hover:bg-primary-900/30 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
             >
               <TagIcon className="w-3 h-3" />
